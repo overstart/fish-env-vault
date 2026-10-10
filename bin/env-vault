@@ -1,0 +1,11 @@
+#!/usr/bin/env fish
+# env-vault 启动器：加载同仓库的 functions/env-vault.fish 模块并调用。
+# 逻辑唯一事实来源在 functions/env-vault.fish（fisher 安装时该文件提供命令）。
+set -l self (status filename)
+if test -L $self
+    set self (readlink -f $self)
+end
+set -l module (dirname $self)/../functions/env-vault.fish
+source $module
+env-vault $argv
+exit $status

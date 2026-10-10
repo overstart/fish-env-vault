@@ -1,0 +1,140 @@
+#!/usr/bin/env fish
+# env-vault 端到端自检。隔离 GNUPGHOME + 临时密钥库，无任何外部框架。
+# 用法: fish tests/selftest.fish
+
+set -g passed 0
+set -g failed 0
+
+function check
+    set -l desc $argv[1]
+    set -l expected $argv[2]
+    set -l actual $argv[3]
+    if test "$expected" = "$actual"
+        set -g passed (math $passed + 1)
+    else
+        set -g failed (math $failed + 1)
+        echo "FAIL: $desc"
+        echo "   expected [$expected]"
+        echo "   actual   [$actual]"
+    end
+end
+
+# 成功/失败断言: check_ok <desc> <cmd...>
+function check_run
+    set -l want $argv[1]
+    set -l desc $argv[2]
+    $argv[3..] >/dev/null 2>&1
+    set -l got (test $status -eq 0; and echo 0; or echo 1)
+    check $desc $want $got
+end
+
+# ---------- 隔离环境 ----------
+set -gx GNUPGHOME (mktemp -d)
+chmod 700 $GNUPGHOME
+set -gx VAULTDIR (mktemp -d)
+set -gx ENV_VAULT_FILE $VAULTDIR/secrets.fish.gpg
+set -gx ENV_VAULT_PASSPHRASE test-pass
+set -l root (status dirname)/..
+set -l CLI $root/bin/env-vault
+
+# ---------- init ----------
+check_run 0 "init 成功" $CLI init
+check "密钥库已创建" 1 (test -f $ENV_VAULT_FILE; and echo 1; or echo 0)
+check "权限 600" 600 (stat -c %a $ENV_VAULT_FILE)
+check_run 1 "重复 init 失败" $CLI init
+check_run 0 "init --force 成功" $CLI init --force
+
+# ---------- set / get ----------
+check_run 0 "set FOO" $CLI set FOO bar
+check "get FOO" bar ($CLI get FOO)
+check_run 1 "set 已存在失败" $CLI set FOO x
+check_run 0 "set --force 覆盖" $CLI set --force FOO new
+check "get 覆盖值" new ($CLI get FOO)
+check_run 1 "set 非法名" $CLI set 1BAD v
+check_run 1 "get 不存在" $CLI get NOPE
+
+# 特殊字符 / 多行字节往返（read 承接，不经命令替换以免换行被拆分）
+set -l weird "a'b\$c
+d\\e	f"
+printf '%s' $weird | $CLI set WEIRD >/dev/null 2>&1
+set -l gotweird
+$CLI get WEIRD | read -fz gotweird
+check "特殊字符字节往返(get=值+换行)" "$weird
+" $gotweird
+
+# ---------- edit ----------
+check_run 0 "edit FOO" $CLI edit FOO edited
+check "get edit 值" edited ($CLI get FOO)
+check_run 1 "edit 不存在失败" $CLI edit NOPE x
+
+# ---------- list ----------
+set -l names ($CLI list)
+check "list 含 FOO" FOO (contains FOO $names; and echo FOO)
+check "list 含 WEIRD" WEIRD (contains WEIRD $names; and echo WEIRD)
+set -l onlynames ($CLI list)
+check "list 默认无值" 0 (count (string match -r 'edited|bar|new' -- $onlynames))
+set -l withvals ($CLI list --values)
+check "list --values 含值" 1 (string match -rq 'FOO=.*edited' -- $withvals; and echo 1; or echo 0)
+
+# ---------- rm ----------
+check_run 0 "rm FOO" $CLI rm FOO
+check "rm 后不含 FOO" 0 (contains FOO ($CLI list); and echo 1; or echo 0)
+check_run 1 "rm 不存在失败" $CLI rm FOO
+check_run 0 "rm --force 忽略" $CLI rm --force FOO
+check_run 0 "rm WEIRD" $CLI rm WEIRD
+check "空库 list" 0 (count ($CLI list))
+check_run 0 "空库后可再 set" $CLI set LATER v
+
+# ---------- import ----------
+printf 'IM_A=x\nexport IM_B=y\n# c\n\n' > $VAULTDIR/in.env
+check_run 0 "import dotenv" $CLI import $VAULTDIR/in.env
+check "import IM_A" x ($CLI get IM_A)
+check "import IM_B" y ($CLI get IM_B)
+check_run 0 "import 冲突跳过(退出0)" $CLI import $VAULTDIR/in.env
+check "冲突时值未变" x ($CLI get IM_A)
+check_run 0 "import --force 覆盖" $CLI import --force $VAULTDIR/in.env
+
+printf "set -gx IM_C 'hello'\n" > $VAULTDIR/in.fish
+check_run 0 "import fish" $CLI import $VAULTDIR/in.fish
+check "import IM_C" hello ($CLI get IM_C)
+
+$CLI export --format gpg --to $VAULTDIR/in.gpg >/dev/null
+check_run 0 "import gpg" $CLI import --force $VAULTDIR/in.gpg
+
+# ---------- export ----------
+$CLI export --format fish > $VAULTDIR/out.fish
+check_run 0 "export fish 可 source" fish $VAULTDIR/out.fish
+set -l dotout ($CLI export --format dotenv)
+check "export dotenv 含键" 1 (string match -rq 'IM_A=x' -- $dotout; and echo 1; or echo 0)
+check_run 0 "export gpg 到文件" $CLI export --format gpg --to $VAULTDIR/bak.gpg
+check "gpg 备份可解密" x ($CLI --passphrase test-pass get IM_A)
+
+# ---------- change-passphrase ----------
+set -gx ENV_VAULT_NEW_PASSPHRASE new-pass
+check_run 0 "改密" $CLI change-passphrase
+set -gx ENV_VAULT_PASSPHRASE new-pass
+check "新密码可读" x ($CLI get IM_A)
+check_run 1 "错误原密码改密被拒" $CLI --passphrase wrong change-passphrase --new-passphrase x
+check "被拒后现密码仍有效" x ($CLI get IM_A)
+set -gx ENV_VAULT_PASSPHRASE test-pass
+check_run 1 "旧密码失效" $CLI list
+
+# ---------- 插件函数 ----------
+set -gx PATH (dirname $CLI) $PATH
+set -gx ENV_VAULT_PASSPHRASE new-pass
+for f in $root/functions/*.fish
+    source $f
+end
+check_run 0 "secrets-load" secrets-load
+check "load 后变量可见" x $IM_A
+check_run 0 "secrets-reload" secrets-reload
+check "reload 后变量可见" y $IM_B
+secrets-unload
+check "unload 后变量消失" 0 (set -q IM_A; and echo 1; or echo 0)
+check_run 0 "再次 load" secrets-load
+
+# ---------- 汇总 ----------
+echo "----------------------------------------"
+echo "通过 $passed，失败 $failed"
+rm -rf $GNUPGHOME $VAULTDIR
+test $failed -eq 0

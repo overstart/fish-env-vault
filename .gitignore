@@ -1,0 +1,9 @@
+# 本仓库不存放真实密钥；若你在此目录测试，忽略本地密钥库与 gpg 临时文件
+secrets/
+*.fish.gpg
+*.tmp.*
+.psub.*
+
+# 编辑器/系统
+*.orig
+.DS_Store
