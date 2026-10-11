@@ -37,9 +37,8 @@ end
 function _vault_decrypt
     set -l file $argv[1]
     if _vault_has_pass
-        set -l pass (set -q _flag_passphrase; and echo $_flag_passphrase; or echo $ENV_VAULT_PASSPHRASE)
         gpg -d --quiet --batch --pinentry-mode loopback \
-            --passphrase-file (printf '%s' $pass | psub -f) -- $file 2>/dev/null
+            --passphrase-file (_vault_pass_file) -- $file 2>/dev/null
     else
         gpg -d --quiet --pinentry-mode loopback -- $file 2>/dev/null
     end
@@ -59,10 +58,9 @@ function _vault_encrypt_to
     set -l out $argv[1]
     set -l count (_vault_s2k_count)
     if _vault_has_pass
-        set -l pass (set -q _flag_passphrase; and echo $_flag_passphrase; or echo $ENV_VAULT_PASSPHRASE)
         gpg -c --quiet --batch --yes --pinentry-mode loopback \
             --s2k-digest-algo SHA512 --s2k-count $count \
-            --passphrase-file (printf '%s' $pass | psub -f) \
+            --passphrase-file (_vault_pass_file) \
             -o $out -- 2>/dev/null
     else
         gpg -c --quiet --yes --pinentry-mode loopback \
@@ -126,12 +124,9 @@ function _vault_write_keys
     set -l keys $argv[2..]
     set -l idx (_vault_keys_file $file)
     set -l tmp "$idx.tmp.(random)"
-    if set -q keys[1]
-        printf '%s\n' $keys > $tmp
-    else
-        printf '' > $tmp
-    end
+    : > $tmp
     chmod 600 -- $tmp
+    set -q keys[1]; and printf '%s\n' $keys > $tmp
     mv -- $tmp $idx
 end
 
@@ -171,6 +166,43 @@ function _vault_read_secret -a prompt
     string match -q -r '^[0-3]\.' -- $version; and echo
 end
 
+# 交互两次确认新密码，结果在全局 __env_vault_newpass；不一致或为空返回 1。
+function _vault_prompt_new_pass
+    _vault_read_secret 'New passphrase: '
+    set -l p1 $__env_vault_reply
+    _vault_read_secret 'Confirm passphrase: '
+    set -l p2 $__env_vault_reply
+    test "$p1" = "$p2"; or begin
+        _vault_die "两次输入不一致"
+        return 1
+    end
+    test -n "$p1"; or begin
+        _vault_die "密码不能为空"
+        return 1
+    end
+    set -g __env_vault_newpass $p1
+end
+
+# 读取变量值：第 2 个位置参数 > 终端隐藏输入 > stdin（保留任意字节）。
+# 结果在全局 __env_vault_value（命令结束由 __env-vault-reset 清除）。
+function _vault_read_value
+    if test (count $argv) -ge 2
+        set -g __env_vault_value $argv[2]
+    else if tty >/dev/null 2>&1
+        _vault_read_secret 'Value: '
+        set -g __env_vault_value $__env_vault_reply
+    else
+        set -g __env_vault_value
+        read -zg __env_vault_value
+    end
+end
+
+# 显式密码来源（--passphrase > ENV_VAULT_PASSPHRASE）的 gpg --passphrase-file 参数文件。
+function _vault_pass_file
+    set -l pass (set -q _flag_passphrase[1]; and echo $_flag_passphrase; or echo $ENV_VAULT_PASSPHRASE)
+    printf '%s' $pass | psub -f
+end
+
 # ------------------------------ 子命令 ------------------------------
 
 function _cmd_init
@@ -184,23 +216,9 @@ function _cmd_init
             return 1
         end
     end
-    if not set -q _flag_passphrase[1]
-        and not set -q ENV_VAULT_PASSPHRASE[1]
-        if tty >/dev/null 2>&1
-            _vault_read_secret 'New passphrase: '
-            set -l p1 $__env_vault_reply
-            _vault_read_secret 'Confirm passphrase: '
-            set -l p2 $__env_vault_reply
-            test "$p1" = "$p2"; or begin
-                _vault_die "两次输入不一致"
-                return 1
-            end
-            test -n "$p1"; or begin
-                _vault_die "密码不能为空"
-                return 1
-            end
-            set -g _flag_passphrase $p1
-        end
+    if not _vault_has_pass; and tty >/dev/null 2>&1
+        _vault_prompt_new_pass; or return 1
+        set -g _flag_passphrase $__env_vault_newpass
     end
     mkdir -p (dirname $file)
     chmod 700 (dirname $file)
@@ -218,15 +236,8 @@ function _cmd_set
     argparse 'force' -- $argv
     set -l name $argv[1]
     _vault_check_name $name; or return 1
-    set -l value
-    if test (count $argv) -ge 2
-        set value $argv[2]
-    else if tty >/dev/null 2>&1
-        _vault_read_secret 'Value: '
-        set value $__env_vault_reply
-    else
-        read -fz value
-    end
+    _vault_read_value $argv
+    set -l value $__env_vault_value
     set -l file (_vault_file_path)
     test -f $file; or begin
         _vault_die "密钥库不存在，先运行 env-vault init"
@@ -241,6 +252,7 @@ function _cmd_set
         end
     else
         set -a keys $name
+        set -ga _vault_keys $name
     end
     set -g $name $value
     _vault_write $file $keys
@@ -251,15 +263,8 @@ function _cmd_edit
     argparse -- $argv
     set -l name $argv[1]
     _vault_check_name $name; or return 1
-    set -l value
-    if test (count $argv) -ge 2
-        set value $argv[2]
-    else if tty >/dev/null 2>&1
-        _vault_read_secret 'Value: '
-        set value $__env_vault_reply
-    else
-        read -fz value
-    end
+    _vault_read_value $argv
+    set -l value $__env_vault_value
     set -l file (_vault_file_path)
     _vault_load $file; or return 1
     set -l keys $_vault_keys
@@ -310,7 +315,15 @@ function _cmd_list
             _vault_write_keys $file $_vault_keys
             set keys $_vault_keys
         end
-        set -q keys[1]; and printf '%s\n' $keys
+        if set -q keys[1]
+            if test -t 1
+                for i in (seq (count $keys))
+                    printf '%d\t%s\n' $i $keys[$i]
+                end
+            else
+                printf '%s\n' $keys
+            end
+        end
     end
     return 0
 end
@@ -483,19 +496,8 @@ function _cmd_change_passphrase
     else if set -q ENV_VAULT_NEW_PASSPHRASE[1]
         set newpass $ENV_VAULT_NEW_PASSPHRASE
     else if tty >/dev/null 2>&1
-        _vault_read_secret 'New passphrase: '
-        set -l p1 $__env_vault_reply
-        _vault_read_secret 'Confirm passphrase: '
-        set -l p2 $__env_vault_reply
-        test "$p1" = "$p2"; or begin
-            _vault_die "两次输入不一致"
-            return 1
-        end
-        test -n "$p1"; or begin
-            _vault_die "密码不能为空"
-            return 1
-        end
-        set newpass $p1
+        _vault_prompt_new_pass; or return 1
+        set newpass $__env_vault_newpass
     else
         _vault_die "需提供新密码: --new-passphrase 或 ENV_VAULT_NEW_PASSPHRASE"
         return 1
@@ -537,7 +539,28 @@ end
 
 # ------------------------------ 主命令 ------------------------------
 
+# 清理每条命令的一次性状态。
+# env-vault 作为 fisher 函数运行在用户持久 shell：set -g 的密码、解密出的密钥变量等会在命令后残留，
+# 既导致 change-passphrase 跳过原密码验证，也会把密钥导出进交互 shell 并泄露给后续子进程。
+# 故每次调用后统一清除（bin 启动器是独立进程，清除无副作用）。
+# 注意：同名的用户 shell 变量也会被一并移除——它已被本次解密值覆盖，移除更安全。
+function __env-vault-reset
+    for n in $_vault_keys
+        set -e $n
+    end
+    set -e _vault_keys _flag_passphrase _flag_file \
+          __env_vault_reply __env_vault_value __env_vault_newpass
+end
+
 function env-vault
+    __env-vault-reset
+    __env-vault-impl $argv
+    set -l rc $status
+    __env-vault-reset
+    return $rc
+end
+
+function __env-vault-impl
     set -l cmd_args $argv
     set -e argv
     while test (count $cmd_args) -gt 0

@@ -146,6 +146,20 @@ secrets-unload
 check "unload 后变量消失" 0 (set -q IM_A; and echo 1; or echo 0)
 check_run 0 "再次 load" secrets-load
 
+# CLI 以函数方式运行在当前 shell（fisher 模型）后，解密出的密钥变量不得残留在调用 shell
+env-vault --passphrase new-pass get IM_A >/dev/null 2>&1
+check "函数模式 get 后密钥不残留" 0 (set -q IM_A; and echo 1; or echo 0)
+check "函数模式 _vault_keys 不残留" 0 (set -q _vault_keys[1]; and echo 1; or echo 0)
+
+# ---------- 全局状态不泄漏（fisher 把 env-vault 装进持久 shell，set -g 状态不得跨命令残留）----------
+# 预置脏状态：残留密码/路径必须在命令入口被清掉，否则会用错文件或跳过改密验证。
+set -g _flag_passphrase stale-pass
+set -g _flag_file /nonexistent/stale-vault
+check_run 0 "脏路径被忽略、本次命令仍成功" env-vault --passphrase new-pass list --values
+check "密码不残留 _flag_passphrase" 0 (set -q _flag_passphrase[1]; and echo 1; or echo 0)
+check "路径不残留 _flag_file" 0 (set -q _flag_file[1]; and echo 1; or echo 0)
+check "键名不残留 _vault_keys" 0 (set -q _vault_keys[1]; and echo 1; or echo 0)
+
 # ---------- 汇总 ----------
 echo "----------------------------------------"
 echo "通过 $passed，失败 $failed"
