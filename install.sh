@@ -6,7 +6,9 @@ SRC=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 DST="$HOME/.config/fish"
 
 mkdir -p "$DST/bin"
-ln -sf "$SRC/bin/env-vault" "$DST/bin/env-vault"
+for b in "$SRC"/bin/*; do
+    ln -sf "$b" "$DST/bin/$(basename "$b")"
+done
 
 for d in conf.d functions completions; do
     mkdir -p "$DST/$d"

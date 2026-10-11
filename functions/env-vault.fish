@@ -2,7 +2,11 @@
 # 本文件既可被 fish 自动加载为 env-vault 命令（fisher 安装 functions/），
 # 也可被 bin/env-vault 启动器 source。唯一运行时依赖: fish, gpg。
 
-set -g ENV_VAULT_DEFAULT_FILE "$HOME/.config/fish/secrets/secrets.fish.gpg"
+# 默认密钥库：$XDG_STATE_HOME/env-vault/vault.gpg（回退 ~/.local/state）。
+if not set -q ENV_VAULT_DEFAULT_FILE[1]
+    set -l _state_home (set -q XDG_STATE_HOME[1]; and echo $XDG_STATE_HOME; or echo "$HOME/.local/state")
+    set -g ENV_VAULT_DEFAULT_FILE "$_state_home/env-vault/vault.gpg"
+end
 
 # 告知 gpg-agent 当前终端，pinentry 弹窗才能关联并前置到本窗口；
 # 否则 GUI pinentry 无父窗口，常退到后台，切窗口时才看得到。
@@ -206,7 +210,7 @@ end
 # ------------------------------ 子命令 ------------------------------
 
 function _cmd_init
-    argparse 'force' -- $argv
+    argparse 'force' -- $argv; or return 1
     set -l file (_vault_file_path)
     if test -e $file
         if set -q _flag_force
@@ -233,7 +237,7 @@ function _cmd_init
 end
 
 function _cmd_set
-    argparse 'force' -- $argv
+    argparse 'force' -- $argv; or return 1
     set -l name $argv[1]
     _vault_check_name $name; or return 1
     _vault_read_value $argv
@@ -260,7 +264,7 @@ function _cmd_set
 end
 
 function _cmd_edit
-    argparse -- $argv
+    argparse -- $argv; or return 1
     set -l name $argv[1]
     _vault_check_name $name; or return 1
     _vault_read_value $argv
@@ -279,7 +283,7 @@ function _cmd_edit
 end
 
 function _cmd_get
-    argparse -- $argv
+    argparse -- $argv; or return 1
     set -l name $argv[1]
     set -l file (_vault_file_path)
     _vault_load $file; or return 1
@@ -293,7 +297,7 @@ function _cmd_get
 end
 
 function _cmd_list
-    argparse 'values' -- $argv
+    argparse 'values' -- $argv; or return 1
     set -l file (_vault_file_path)
     test -f $file; or return 0
     if set -q _flag_values
@@ -331,7 +335,7 @@ function _cmd_list
 end
 
 function _cmd_rm
-    argparse 'force' -- $argv
+    argparse 'force' -- $argv; or return 1
     set -l targets $argv
     test (count $targets) -ge 1; or begin
         _vault_die "用法: env-vault rm NAME..."
@@ -363,7 +367,7 @@ function _cmd_rm
 end
 
 function _cmd_import
-    argparse 'force' -- $argv
+    argparse 'force' -- $argv; or return 1
     set -l src $argv[1]
     test -f $src; or begin
         _vault_die "文件不存在: $src"
@@ -444,45 +448,38 @@ function _cmd_import
 end
 
 function _cmd_export
-    argparse 'format=' 'to=' -- $argv
+    argparse 'format=' 'o/output=' -- $argv; or return 1
     set -q _flag_format; or set _flag_format fish
     set -l file (_vault_file_path)
     _vault_load $file; or return 1
     set -l keys $_vault_keys
     switch $_flag_format
         case gpg
-            if set -q _flag_to[1]
-                cp -- $file $_flag_to
-                chmod 600 $_flag_to
-                echo "已备份到 $_flag_to"
-                return
+            if set -q _flag_output[1]
+                cp -- $file $_flag_output
+                chmod 600 $_flag_output
+                echo "已备份到 $_flag_output"
+            else
+                cat $file
             end
-            cat $file
             return
         case fish dotenv
         case '*'
             _vault_die "未知格式: $_flag_format（fish|dotenv|gpg）"
             return 1
     end
-    if set -q _flag_to[1]
-        if test $_flag_format = fish
-            _render_fish $keys > $_flag_to
-        else
-            _render_dotenv $keys > $_flag_to
-        end
-        chmod 600 $_flag_to
-        echo "已导出到 $_flag_to"
+    set -l render (test $_flag_format = fish; and echo _render_fish; or echo _render_dotenv)
+    if set -q _flag_output[1]
+        $render $keys > $_flag_output
+        chmod 600 $_flag_output
+        echo "已导出到 $_flag_output"
     else
-        if test $_flag_format = fish
-            _render_fish $keys
-        else
-            _render_dotenv $keys
-        end
+        $render $keys
     end
 end
 
-function _cmd_change_passphrase
-    argparse 'new-passphrase=' -- $argv
+function _cmd_passwd
+    argparse 'new-passphrase=' -- $argv; or return 1
     set -l file (_vault_file_path)
     # 交互时强制当场验证原密码，防止仅凭 ENV_VAULT_PASSPHRASE 或 gpg-agent 缓存直接改密。
     if tty >/dev/null 2>&1
@@ -513,7 +510,7 @@ function __vault_help
     printf '%s\n' \
 'env-vault — GPG 加密的 fish 环境变量密钥库' \
 '' \
-'用法: env-vault [--file FILE] [--passphrase PWD] <命令> [参数]' \
+'用法: env-vault [-f FILE] [--passphrase PWD] <命令> [参数]' \
 '' \
 '命令:' \
 '  init [--force]                      创建密钥库' \
@@ -523,8 +520,8 @@ function __vault_help
 '  list [--values]                     列出变量名（默认不显示值）' \
 '  rm NAME... [--force]                删除变量' \
 '  import FILE [--force]               从 .env / .fish / .gpg 导入' \
-'  export [--format fish|dotenv|gpg] [--to FILE]' \
-'  change-passphrase [--new-passphrase PWD]  修改密码（交互时先验证原密码）' \
+'  export [--format fish|dotenv|gpg] [-o FILE]' \
+'  passwd [--new-passphrase PWD]       修改密码（交互时先验证原密码）' \
 '  path                                显示密钥库路径' \
 '' \
 '环境变量:' \
@@ -543,7 +540,7 @@ end
 
 # 清理每条命令的一次性状态。
 # env-vault 作为 fisher 函数运行在用户持久 shell：set -g 的密码、解密出的密钥变量等会在命令后残留，
-# 既导致 change-passphrase 跳过原密码验证，也会把密钥导出进交互 shell 并泄露给后续子进程。
+# 既导致 passwd 跳过原密码验证，也会把密钥导出进交互 shell 并泄露给后续子进程。
 # 故每次调用后统一清除（bin 启动器是独立进程，清除无副作用）。
 # 注意：同名的用户 shell 变量也会被一并移除——它已被本次解密值覆盖，移除更安全。
 function __env-vault-reset
@@ -563,58 +560,35 @@ function env-vault
 end
 
 function __env-vault-impl
-    set -l cmd_args $argv
-    set -e argv
-    while test (count $cmd_args) -gt 0
-        switch $cmd_args[1]
-            case --file --file='*'
-                if string match -q -- '--file=*' $cmd_args[1]
-                    set -g _flag_file (string replace -- '--file=' '' $cmd_args[1])
-                    set -e cmd_args[1]
-                else
-                    set -g _flag_file $cmd_args[2]
-                    set -e cmd_args[1..2]
-                end
-            case --passphrase --passphrase='*'
-                if string match -q -- '--passphrase=*' $cmd_args[1]
-                    set -g _flag_passphrase (string replace -- '--passphrase=' '' $cmd_args[1])
-                    set -e cmd_args[1]
-                else
-                    set -g _flag_passphrase $cmd_args[2]
-                    set -e cmd_args[1..2]
-                end
-            case -h --help
-                __vault_help
-                return 0
-            case --
-                set -e cmd_args[1]
-                break
-            case '-*'
-                _vault_die "未知全局选项: $cmd_args[1]"
-                return 1
-            case '*'
-                break
-        end
-        set cmd_args $cmd_args
-    end
-    test (count $cmd_args) -ge 1
+    # -i：未知选项原样透传给子命令（如 init --force），全局只提取 -f/--passphrase/-h。
+    argparse -i 'h/help' 'f/file=' 'passphrase=' -- $argv
     or begin
         _usage
         return 1
     end
-    set -l cmd $cmd_args[1]
-    set -e cmd_args[1]
-    set argv $cmd_args
+    if set -q _flag_help
+        __vault_help
+        return 0
+    end
+    # argparse 产生局部 flag，提升为全局供各 _cmd_* 读取（结束由 reset 清除）。
+    set -q _flag_file[1]; and set -g _flag_file $_flag_file
+    set -q _flag_passphrase[1]; and set -g _flag_passphrase $_flag_passphrase
+    test (count $argv) -ge 1; or begin
+        _usage
+        return 1
+    end
+    set -l cmd $argv[1]
+    set -e argv[1]
     switch $cmd
         case init; _cmd_init $argv
         case set; _cmd_set $argv
-        case edit add; _cmd_edit $argv
-        case get show; _cmd_get $argv
-        case list ls; _cmd_list $argv
-        case rm del delete; _cmd_rm $argv
+        case edit; _cmd_edit $argv
+        case get; _cmd_get $argv
+        case list; _cmd_list $argv
+        case rm; _cmd_rm $argv
         case import; _cmd_import $argv
         case export; _cmd_export $argv
-        case change-passphrase passwd; _cmd_change_passphrase $argv
+        case passwd; _cmd_passwd $argv
         case path; _vault_file_path
         case '*'
             _usage

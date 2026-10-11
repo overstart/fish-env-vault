@@ -32,10 +32,19 @@ end
 set -gx GNUPGHOME (mktemp -d)
 chmod 700 $GNUPGHOME
 set -gx VAULTDIR (mktemp -d)
-set -gx ENV_VAULT_FILE $VAULTDIR/secrets.fish.gpg
+set -gx ENV_VAULT_FILE $VAULTDIR/vault.gpg
 set -gx ENV_VAULT_PASSPHRASE test-pass
 set -l root (status dirname)/..
 set -l CLI $root/bin/env-vault
+set -l EV $root/bin/ev
+
+# ---------- 默认路径与短别名 ----------
+set -l xdgstate (mktemp -d)
+check "默认路径遵循 XDG_STATE_HOME" "$xdgstate/env-vault/vault.gpg" \
+    (env -u ENV_VAULT_FILE XDG_STATE_HOME=$xdgstate $CLI path)
+check "短别名 ev 可用" 0 (env -u ENV_VAULT_FILE XDG_STATE_HOME=$xdgstate $EV path >/dev/null; and echo 0; or echo 1)
+check_run 1 "未知命令失败" $CLI bogus
+check_run 1 "未知选项失败" $CLI --bogus list
 
 # ---------- init ----------
 check_run 0 "init 成功" $CLI init
@@ -111,7 +120,7 @@ printf "set -gx IM_C 'hello'\n" > $VAULTDIR/in.fish
 check_run 0 "import fish" $CLI import $VAULTDIR/in.fish
 check "import IM_C" hello ($CLI get IM_C)
 
-$CLI export --format gpg --to $VAULTDIR/in.gpg >/dev/null
+$CLI export --format gpg -o $VAULTDIR/in.gpg >/dev/null
 check_run 0 "import gpg" $CLI import --force $VAULTDIR/in.gpg
 
 # ---------- export ----------
@@ -119,18 +128,21 @@ $CLI export --format fish > $VAULTDIR/out.fish
 check_run 0 "export fish 可 source" fish $VAULTDIR/out.fish
 set -l dotout ($CLI export --format dotenv)
 check "export dotenv 含键" 1 (string match -rq 'IM_A=x' -- $dotout; and echo 1; or echo 0)
-check_run 0 "export gpg 到文件" $CLI export --format gpg --to $VAULTDIR/bak.gpg
+check_run 0 "export gpg 到文件" $CLI export --format gpg -o $VAULTDIR/bak.gpg
 check "gpg 备份可解密" x ($CLI --passphrase test-pass get IM_A)
+check_run 0 "-f 短选项等价 --file" $CLI -f $VAULTDIR/bak.gpg --passphrase test-pass list --values
 
-# ---------- change-passphrase ----------
+# ---------- passwd ----------
 set -gx ENV_VAULT_NEW_PASSPHRASE new-pass
-check_run 0 "改密" $CLI change-passphrase
+check_run 0 "改密" $CLI passwd
 set -gx ENV_VAULT_PASSPHRASE new-pass
 check "新密码可读" x ($CLI get IM_A)
-check_run 1 "错误原密码改密被拒" $CLI --passphrase wrong change-passphrase --new-passphrase x
+check_run 1 "错误原密码改密被拒" $CLI --passphrase wrong passwd --new-passphrase x
 check "被拒后现密码仍有效" x ($CLI get IM_A)
 set -gx ENV_VAULT_PASSPHRASE test-pass
 check_run 1 "旧密码失效" $CLI list --values
+check_run 1 "旧命令名 change-passphrase 已移除" $CLI change-passphrase
+check_run 1 "旧参数 --to 已移除" $CLI export --format gpg --to $VAULTDIR/x.gpg
 
 # ---------- 插件函数 ----------
 set -gx PATH (dirname $CLI) $PATH
@@ -138,13 +150,13 @@ set -gx ENV_VAULT_PASSPHRASE new-pass
 for f in $root/functions/*.fish
     source $f
 end
-check_run 0 "secrets-load" secrets-load
+check_run 0 "env-vault-load" env-vault-load
 check "load 后变量可见" x $IM_A
-check_run 0 "secrets-reload" secrets-reload
+check_run 0 "env-vault-reload" env-vault-reload
 check "reload 后变量可见" y $IM_B
-secrets-unload
+env-vault-unload
 check "unload 后变量消失" 0 (set -q IM_A; and echo 1; or echo 0)
-check_run 0 "再次 load" secrets-load
+check_run 0 "再次 load" env-vault-load
 
 # CLI 以函数方式运行在当前 shell（fisher 模型）后，解密出的密钥变量不得残留在调用 shell
 env-vault --passphrase new-pass get IM_A >/dev/null 2>&1

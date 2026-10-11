@@ -1,0 +1,8 @@
+#!/usr/bin/env fish
+# env-vault 短别名启动器，转发给同目录 env-vault。
+set -l self (status filename)
+if test -L $self
+    set self (readlink -f $self)
+end
+set -l target (dirname $self)/env-vault
+exec $target $argv
