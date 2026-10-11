@@ -75,6 +75,19 @@ set -l onlynames ($CLI list)
 check "list 默认无值" 0 (count (string match -r 'edited|bar|new' -- $onlynames))
 set -l withvals ($CLI list --values)
 check "list --values 含值" 1 (string match -rq 'FOO=.*edited' -- $withvals; and echo 1; or echo 0)
+# list 免密：伪造 gpg 必失败 + 清空密码，仍应能列出 key；--values 必须解密
+set -l fakebin (mktemp -d)
+printf '#!/bin/sh\necho SHOULD-NOT-CALL-GPG >&2\nexit 99\n' > $fakebin/gpg; chmod +x $fakebin/gpg
+function __nopf
+    set -lx PATH $fakebin $PATH
+    env -u ENV_VAULT_PASSPHRASE $argv
+end
+set -l nokeynames (__nopf $CLI list)
+check "list 无密码含 FOO" FOO (contains FOO $nokeynames; and echo FOO)
+check "list 无密码含 WEIRD" WEIRD (contains WEIRD $nokeynames; and echo WEIRD)
+check_run 1 "list --values 必须解密" __nopf $CLI list --values
+functions -e __nopf
+rm -rf $fakebin 2>/dev/null
 
 # ---------- rm ----------
 check_run 0 "rm FOO" $CLI rm FOO
@@ -117,7 +130,7 @@ check "新密码可读" x ($CLI get IM_A)
 check_run 1 "错误原密码改密被拒" $CLI --passphrase wrong change-passphrase --new-passphrase x
 check "被拒后现密码仍有效" x ($CLI get IM_A)
 set -gx ENV_VAULT_PASSPHRASE test-pass
-check_run 1 "旧密码失效" $CLI list
+check_run 1 "旧密码失效" $CLI list --values
 
 # ---------- 插件函数 ----------
 set -gx PATH (dirname $CLI) $PATH

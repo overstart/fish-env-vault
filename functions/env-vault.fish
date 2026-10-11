@@ -115,6 +115,26 @@ function _render_dotenv
     end
 end
 
+# key 名明文索引路径（与密钥库同目录），让 `list` 免密。仅含变量名，不含值。
+function _vault_keys_file
+    echo "$argv[1].keys"
+end
+
+# 原子写入 key 名索引（权限 600）。每次写库同步刷新。
+function _vault_write_keys
+    set -l file $argv[1]
+    set -l keys $argv[2..]
+    set -l idx (_vault_keys_file $file)
+    set -l tmp "$idx.tmp.(random)"
+    if set -q keys[1]
+        printf '%s\n' $keys > $tmp
+    else
+        printf '' > $tmp
+    end
+    chmod 600 -- $tmp
+    mv -- $tmp $idx
+end
+
 # 当前作用域中的变量名 + 值全量重写并原子替换密钥库。
 function _vault_write
     set -l file $argv[1]
@@ -131,6 +151,7 @@ function _vault_write
     end
     mv -- $tmp $file
     chmod 600 -- $file
+    _vault_write_keys $file $keys
 end
 
 function _vault_check_name
@@ -189,6 +210,7 @@ function _cmd_init
         return 1
     end
     chmod 600 $file
+    _vault_write_keys $file
     echo "已创建密钥库: $file"
 end
 
@@ -269,16 +291,26 @@ function _cmd_list
     argparse 'values' -- $argv
     set -l file (_vault_file_path)
     test -f $file; or return 0
-    _vault_load $file; or return 1
-    set -l keys $_vault_keys
-    for n in $keys
-        if set -q _flag_values
+    if set -q _flag_values
+        _vault_load $file; or return 1
+        set -l keys $_vault_keys
+        for n in $keys
             printf "%s='" $n
             printf '%s' $$n | string replace "'" "'\\''"
             printf "'\n"
-        else
-            echo $n
         end
+    else
+        set -l idx (_vault_keys_file $file)
+        set -l keys
+        if test -f $idx
+            set keys (string match -r '^[A-Za-z_][A-Za-z0-9_]*$' < $idx)
+        else
+            # 旧库无索引：解密一次重建，之后 list 免密。
+            _vault_load $file; or return 1
+            _vault_write_keys $file $_vault_keys
+            set keys $_vault_keys
+        end
+        set -q keys[1]; and printf '%s\n' $keys
     end
     return 0
 end
