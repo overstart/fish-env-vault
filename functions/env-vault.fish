@@ -299,9 +299,11 @@ function _cmd_list
     if set -q _flag_values
         _vault_load $file; or return 1
         set -l keys $_vault_keys
-        for n in $keys
-            printf "%s='" $n
-            printf '%s' $$n | string replace "'" "'\\''"
+        set -l numbered; test -t 1; and set numbered 1
+        for i in (seq (count $keys))
+            set -q numbered[1]; and printf '%d\t' $i
+            printf "%s='" $keys[$i]
+            printf '%s' $$keys[$i] | string replace "'" "'\\''"
             printf "'\n"
         end
     else
