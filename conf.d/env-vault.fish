@@ -7,4 +7,12 @@ function __env-vault-autoload
     __env-vault-decrypt $file 2>/dev/null | source
 end
 
-__env-vault-autoload
+# 仅在“交互式 shell 启动”时自动加载：
+# - bin/env-vault 等非交互子进程不弹密码；
+# - fisher 安装/更新时会在其函数内 source 本文件（调用栈无 during startup），同样跳过。
+if status is-interactive
+    set -l trace (status stack-trace 2>/dev/null; or status print-stack-trace 2>/dev/null)
+    if string match -q -- '*called during startup*' -- $trace
+        __env-vault-autoload
+    end
+end
