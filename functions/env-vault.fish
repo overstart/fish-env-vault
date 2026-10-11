@@ -143,6 +143,13 @@ function _vault_check_name
     end
 end
 
+# 隐藏输入密码，结果在全局 __env_vault_reply。
+# fish 4 的 read -s 回车时自行换行，再 echo 会产生空行；fish 3 不换行需手动补一个。
+function _vault_read_secret -a prompt
+    read -sg -P $prompt __env_vault_reply
+    string match -q -r '^[0-3]\.' -- $version; and echo
+end
+
 # ------------------------------ 子命令 ------------------------------
 
 function _cmd_init
@@ -159,8 +166,10 @@ function _cmd_init
     if not set -q _flag_passphrase[1]
         and not set -q ENV_VAULT_PASSPHRASE[1]
         if tty >/dev/null 2>&1
-            read -sl -P 'New passphrase: ' p1; echo
-            read -sl -P 'Confirm passphrase: ' p2; echo
+            _vault_read_secret 'New passphrase: '
+            set -l p1 $__env_vault_reply
+            _vault_read_secret 'Confirm passphrase: '
+            set -l p2 $__env_vault_reply
             test "$p1" = "$p2"; or begin
                 _vault_die "两次输入不一致"
                 return 1
@@ -191,7 +200,8 @@ function _cmd_set
     if test (count $argv) -ge 2
         set value $argv[2]
     else if tty >/dev/null 2>&1
-        read -sf -P 'Value: ' value
+        _vault_read_secret 'Value: '
+        set value $__env_vault_reply
     else
         read -fz value
     end
@@ -223,7 +233,8 @@ function _cmd_edit
     if test (count $argv) -ge 2
         set value $argv[2]
     else if tty >/dev/null 2>&1
-        read -sf -P 'Value: ' value
+        _vault_read_secret 'Value: '
+        set value $__env_vault_reply
     else
         read -fz value
     end
@@ -429,8 +440,8 @@ function _cmd_change_passphrase
     # 交互时强制当场验证原密码，防止仅凭 ENV_VAULT_PASSPHRASE 或 gpg-agent 缓存直接改密。
     if tty >/dev/null 2>&1
         and not set -q _flag_passphrase[1]
-        read -sl -P 'Current passphrase: ' oldpass; echo
-        set -g _flag_passphrase $oldpass
+        _vault_read_secret 'Current passphrase: '
+        set -g _flag_passphrase $__env_vault_reply
     end
     _vault_load $file; or return 1
     set -l keys $_vault_keys
@@ -440,8 +451,10 @@ function _cmd_change_passphrase
     else if set -q ENV_VAULT_NEW_PASSPHRASE[1]
         set newpass $ENV_VAULT_NEW_PASSPHRASE
     else if tty >/dev/null 2>&1
-        read -sl -P 'New passphrase: ' p1; echo
-        read -sl -P 'Confirm passphrase: ' p2; echo
+        _vault_read_secret 'New passphrase: '
+        set -l p1 $__env_vault_reply
+        _vault_read_secret 'Confirm passphrase: '
+        set -l p2 $__env_vault_reply
         test "$p1" = "$p2"; or begin
             _vault_die "两次输入不一致"
             return 1
