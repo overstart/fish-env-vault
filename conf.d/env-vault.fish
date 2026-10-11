@@ -1,18 +1,13 @@
 # Fish 启动时自动加载 GPG 加密密钥库。
-# 管道解密直接 source：明文只流经管道，不写入磁盘。
-# 解密失败（无密钥库 / 取消 pinentry）静默跳过，不阻断启动。
+# 仅在存在非交互密码（ENV_VAULT_PASSPHRASE）时静默解密 source，明文只流经管道、不落地。
+# 绝不主动提示或阻塞：新开终端/tmux 窗口不会弹密码。
+# 需要在当前窗口使用变量时执行 secrets-load：loopback 输入的密码不经 gpg-agent 缓存，
+# 变量只注入当前 shell（当前 window/pane），不影响其他窗口。
 function __env-vault-autoload
+    set -q ENV_VAULT_PASSPHRASE[1]; or return 0
     set -l file (__env-vault-file)
     test -f $file; or return 0
     __env-vault-decrypt $file 2>/dev/null | source
 end
 
-# 仅在“交互式 shell 启动”时自动加载：
-# - bin/env-vault 等非交互子进程不弹密码；
-# - fisher 安装/更新时会在其函数内 source 本文件（调用栈无 during startup），同样跳过。
-if status is-interactive
-    set -l trace (status stack-trace 2>/dev/null; or status print-stack-trace 2>/dev/null)
-    if string match -q -- '*called during startup*' -- $trace
-        __env-vault-autoload
-    end
-end
+__env-vault-autoload

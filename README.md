@@ -7,7 +7,7 @@ GPG 对称加密的 Fish 环境变量密钥库。磁盘零明文、一份加密�
 - Fish 原生 `set -Ux` 写死在 `fish_variables`，绑定机器、无法迁移、不能纳入 dotfiles。
 - 明文 `secrets.fish` 无法安全备份或同步。
 
-env-vault 把所有变量加密进单个文件，Fish 启动时管道解密 `source`（明文不落地），变量以 `set -gx` 注入全局。
+env-vault 把所有变量加密进单个文件，需要时管道解密 `source`（明文不落地），变量以 `set -gx` 注入当前 shell。
 
 ## 依赖
 
@@ -42,7 +42,7 @@ env-vault list                          # 只列变量名（不显示值）
 env-vault get GITHUB_TOKEN              # 查看值
 ```
 
-新终端打开时自动加载，`echo $GITHUB_TOKEN` 即可用。首次需输入密码，之后由 gpg-agent 缓存。
+在需要的窗口执行 `secrets-load` 并输入密码后，`echo $GITHUB_TOKEN` 即可用；变量只注入当前 shell，不影响其他终端或 tmux 的 window/pane。新开窗口不会提示密码，需要时再 `secrets-load`。若希望启动时静默自动加载，可设置 `ENV_VAULT_PASSPHRASE`（见[脚本化](#脚本化)）。
 
 ## 命令
 
