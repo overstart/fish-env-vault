@@ -2,10 +2,10 @@
 # 本文件既可被 fish 自动加载为 env-vault 命令（fisher 安装 functions/），
 # 也可被 bin/env-vault 启动器 source。唯一运行时依赖: fish, gpg。
 
-# 默认密钥库：$XDG_STATE_HOME/env-vault/vault.gpg（回退 ~/.local/state）。
+# 默认密钥库：$XDG_DATA_HOME/env-vault/vault.gpg（回退 ~/.local/share）。
 if not set -q ENV_VAULT_DEFAULT_FILE[1]
-    set -l _state_home (set -q XDG_STATE_HOME[1]; and echo $XDG_STATE_HOME; or echo "$HOME/.local/state")
-    set -g ENV_VAULT_DEFAULT_FILE "$_state_home/env-vault/vault.gpg"
+    set -l _data_home (set -q XDG_DATA_HOME[1]; and echo $XDG_DATA_HOME; or echo "$HOME/.local/share")
+    set -g ENV_VAULT_DEFAULT_FILE "$_data_home/env-vault/vault.gpg"
 end
 
 # 告知 gpg-agent 当前终端，pinentry 弹窗才能关联并前置到本窗口；

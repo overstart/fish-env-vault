@@ -39,10 +39,10 @@ set -l CLI $root/bin/env-vault
 set -l EV $root/bin/ev
 
 # ---------- 默认路径与短别名 ----------
-set -l xdgstate (mktemp -d)
-check "默认路径遵循 XDG_STATE_HOME" "$xdgstate/env-vault/vault.gpg" \
-    (env -u ENV_VAULT_FILE XDG_STATE_HOME=$xdgstate $CLI path)
-check "短别名 ev 可用" 0 (env -u ENV_VAULT_FILE XDG_STATE_HOME=$xdgstate $EV path >/dev/null; and echo 0; or echo 1)
+set -l xdgdata (mktemp -d)
+check "默认路径遵循 XDG_DATA_HOME" "$xdgdata/env-vault/vault.gpg" \
+    (env -u ENV_VAULT_FILE XDG_DATA_HOME=$xdgdata $CLI path)
+check "短别名 ev 可用" 0 (env -u ENV_VAULT_FILE XDG_DATA_HOME=$xdgdata $EV path >/dev/null; and echo 0; or echo 1)
 check_run 1 "未知命令失败" $CLI bogus
 check_run 1 "未知选项失败" $CLI --bogus list
 

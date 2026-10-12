@@ -86,7 +86,7 @@ env-vault passwd                         # ENV_VAULT_PASSPHRASE 作原密码，�
 2. 拷贝 `vault.gpg` 到同路径（可选一并拷贝 `.keys` 索引，不拷也不影响）；
 3. 输入密码执行一次 `env-vault-load` 或任意需要解密的命令，全部变量恢复；未带索引时首次 `list` 会解密一次并自动重建 `.keys`。
 
-默认密钥库路径遵循 XDG：`$XDG_STATE_HOME/env-vault/vault.gpg`（回退 `~/.local/state/env-vault/vault.gpg`），可用 `ENV_VAULT_FILE` 或 `-f` 覆盖。
+默认密钥库路径遵循 XDG：`$XDG_DATA_HOME/env-vault/vault.gpg`（回退 `~/.local/share/env-vault/vault.gpg`），可用 `ENV_VAULT_FILE` 或 `-f` 覆盖。
 
 备份/迁移用加密格式（无需密码即可拷贝）：
 
@@ -100,7 +100,7 @@ env-vault export --format gpg -o backup.gpg
 - S2K 迭代默认 ~3M（约 10ms），可用 `ENV_VAULT_S2K_COUNT` 调高（65M 约 89ms，离线爆破抗性更强）。
 - 密钥库文件权限 600，目录 700。
 - 为支持免密 `list`，变量名（不含值）以明文保存在密钥库旁的 `<密钥库>.keys` 索引文件（权限 600），随每次写入自动重建；删除后下次需解密的命令会再生成。介意变量名泄露者应一并保护好密钥库目录。
-- dotfiles 中建议忽略 `~/.local/state/env-vault/`，仅在私钥/密码受信任时才将加密库纳入版本控制。
+- dotfiles 中建议忽略 `~/.local/share/env-vault/`，仅在私钥/密码受信任时才将加密库纳入版本控制。
 
 ## 测试
 
